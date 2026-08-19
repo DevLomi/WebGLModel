@@ -104,16 +104,22 @@ function helloPyramid() {
     let mouseDownTime = 0;
     let mouseDownX = 0;
     let mouseDownY = 0;
-
     let isSwinging = false;
     let swingProgress = 0; // 0 → 1
     const SWING_DURATION = 0.55; // seconds
 
+    // -------------------- Physics state --------------------
+    let shapePosition = [0, 0, 0];
+    let shapeVelocity = [0, 0, 0]; 
+
     // -------------------- Geometry helpers --------------------
-    let verts = [];
+    let positions = [];   // Float32
+    let colors = [];      // Uint8 (0-255)
 
     function face(p0, p1, p2, color) {
-        return [...p0, ...color, ...p1, ...color, ...p2, ...color];
+        // color is already [r,g,b] in 0-255
+        positions.push(...p0, ...p1, ...p2);
+        colors.push(...color, ...color, ...color);
     }
 
     function pushFaceOut(p0, p1, p2, color, center) {
@@ -135,14 +141,13 @@ function helloPyramid() {
             centroid[2] - center[2]
         ];
         const dot = normal[0] * toCentroid[0] + normal[1] * toCentroid[1] + normal[2] * toCentroid[2];
-        if (dot < 0) verts.push(...face(p0, p2, p1, color));
-        else verts.push(...face(p0, p1, p2, color));
+        if (dot < 0) face(p0, p2, p1, color);
+        else face(p0, p1, p2, color);
     }
 
     function pushEllipsoid(center, radii, latSegments, lonSegments, color, latStart = 0, latEnd = Math.PI) {
         const [cx, cy, cz] = center;
         const [rx, ry, rz] = radii;
-
         function vertexAt(lat, lon) {
             const theta = latStart + (lat / latSegments) * (latEnd - latStart);
             const phi = (lon / lonSegments) * Math.PI * 2;
@@ -185,7 +190,6 @@ function helloPyramid() {
         const top = transform([cx, cy + halfH, cz]);
         const bottom = transform([cx, cy - halfH, cz]);
         const centerRef = transform(center);
-
         function ringPoint(i, y) {
             const angle = (i / segments) * Math.PI * 2;
             return transform([cx + Math.cos(angle) * radius, y, cz + Math.sin(angle) * radius]);
@@ -202,17 +206,18 @@ function helloPyramid() {
         }
     }
 
-    // Colors
-    const colorWood = [0.62, 0.38, 0.18];
-    const colorWoodDark = [0.42, 0.24, 0.10];
-    const colorWoodLight = [0.75, 0.52, 0.28];
-    const colorEye = [0.05, 0.04, 0.04];
-    const colorMouth = [0.08, 0.05, 0.04];
-    const colorHand = [0.58, 0.35, 0.16];
+    // Colors now as 0-255 (Uint8)
+    const colorWood      = [158, 97, 46];
+    const colorWoodDark  = [107, 61, 26];
+    const colorWoodLight = [191, 133, 71];
+    const colorEye       = [13, 10, 10];
+    const colorMouth     = [20, 13, 10];
+    const colorHand      = [148, 89, 41];
 
     // -------------------- Build animated geometry --------------------
     function buildGeometry(time, swingT) {
-        verts = [];
+        positions = [];
+        colors = [];
 
         // Idle dance parameters
         const bob = Math.sin(time * 4.2) * 0.12;
@@ -224,11 +229,10 @@ function helloPyramid() {
 
         // Swing overrides (ease-out)
         const swingEase = swingT < 1 ? 1 - Math.pow(1 - swingT, 3) : 1;
-        const swingArmAngle = swingEase * (1.3); // big forward swing
+        const swingArmAngle = swingEase * (1.3);
         const swingBodyTwist = swingEase * 0.35;
         const swingLean = swingEase * 0.25;
 
-        // Combined body transform
         const bodyY = bob;
         const bodySway = sway + swingBodyTwist;
 
@@ -246,16 +250,14 @@ function helloPyramid() {
         pushEllipsoid([bodySway * 0.3 - 0.18, bodyY + 0.38, faceZ + 0.1], [0.08, 0.07, 0.05], 6, 8, colorWoodLight);
         pushEllipsoid([bodySway * 0.3 + 0.18, bodyY + 0.38, faceZ + 0.1], [0.08, 0.07, 0.05], 6, 8, colorWoodLight);
 
-        // ---- Left arm (idle wave) ----
+        // ---- Left arm ----
         const leftArmAngle = leftArmWave;
         const leftShoulder = [bodySway * 0.1 - 0.7, bodyY + 0.4, 0.1];
         const leftArmTransform = (p) => {
-            // simple rotate around shoulder on Z
             let x = p[0] - leftShoulder[0];
             let y = p[1] - leftShoulder[1];
             let z = p[2] - leftShoulder[2];
-            const c = Math.cos(leftArmAngle),
-                s = Math.sin(leftArmAngle);
+            const c = Math.cos(leftArmAngle), s = Math.sin(leftArmAngle);
             const x2 = x * c - y * s;
             const y2 = x * s + y * c;
             return [x2 + leftShoulder[0], y2 + leftShoulder[1], z + leftShoulder[2]];
@@ -263,16 +265,14 @@ function helloPyramid() {
         pushEllipsoid(leftArmTransform([-1.15, 0.35, 0.15]), [0.55, 0.22, 0.22], 8, 10, colorWood);
         pushEllipsoid(leftArmTransform([-1.75, 0.35, 0.15]), [0.28, 0.28, 0.28], 8, 10, colorHand);
 
-        // ---- Right arm (idle + swing) ----
+        // ---- Right arm + bat ----
         const rightArmAngle = rightArmWave + swingArmAngle;
         const rightShoulder = [bodySway * 0.3 + 0.10, bodyY + 0.25, 0.15];
         const rightArmTransform = (p) => {
             let x = p[0] - rightShoulder[0];
             let y = p[1] - rightShoulder[1];
             let z = p[2] - rightShoulder[2];
-            // rotate mainly on X (forward swing) + a bit of Z
-            const cX = Math.cos(rightArmAngle),
-                sX = Math.sin(rightArmAngle);
+            const cX = Math.cos(rightArmAngle), sX = Math.sin(rightArmAngle);
             const y2 = y * cX - z * sX;
             const z2 = y * sX + z * cX;
             return [x + rightShoulder[0], y2 + rightShoulder[1], z2 + rightShoulder[2]];
@@ -281,16 +281,13 @@ function helloPyramid() {
         const rightHandPos = rightArmTransform([1.75, 0.15, 0.25]);
         pushEllipsoid(rightHandPos, [0.28, 0.28, 0.28], 8, 10, colorHand);
 
-        // ---- Small bat (follows right hand + extra swing) ----
         const batBase = rightArmTransform([2.05, 0.55, 0.35]);
-        // extra rotation of the bat itself during swing
-        const batExtraAngle = swingEase * (1);
+        const batExtraAngle = swingEase * 1.0;
         const batTransform = (p) => {
             let x = p[0] - batBase[0];
             let y = p[1] - batBase[1];
             let z = p[2] - batBase[2];
-            const c = Math.cos(batExtraAngle),
-                s = Math.sin(batExtraAngle);
+            const c = Math.cos(batExtraAngle), s = Math.sin(batExtraAngle);
             const y2 = y * c - z * s;
             const z2 = y * s + z * c;
             return [x + batBase[0], y2 + batBase[1], z2 + batBase[2]];
@@ -301,25 +298,31 @@ function helloPyramid() {
         // ---- Legs ----
         pushCylinder([bodySway * 0.15 - 0.38, bodyY - 2.15 + leftLegBounce, 0.05], 0.28, 0.9, 12, colorWood);
         pushEllipsoid([bodySway * 0.15 - 0.38, bodyY - 2.65 + leftLegBounce, 0.15], [0.32, 0.18, 0.38], 8, 10, colorWoodDark);
-
         pushCylinder([bodySway * 0.15 + 0.38, bodyY - 2.15 + rightLegBounce, 0.05], 0.28, 0.9, 12, colorWood);
         pushEllipsoid([bodySway * 0.15 + 0.38, bodyY - 2.65 + rightLegBounce, 0.15], [0.32, 0.18, 0.38], 8, 10, colorWoodDark);
     }
 
     // -------------------- GL setup --------------------
-    const FLOATS_PER_VERTEX = 6;
-    const geoBuffer = gl.createBuffer();
+    const posBuffer = gl.createBuffer();
+    const colorBuffer = gl.createBuffer();
+    const vao = gl.createVertexArray();
 
+    // shaders with required uniforms
     const vsSource = `#version 300 es
     precision mediump float;
     in vec3 vertexPosition;
     in vec3 vertexColor;
     uniform mat4 modelViewProjection;
+    uniform vec3 shapeLocation;   // required
+    uniform vec3 shapeSize;       // required
     out vec3 fragColor;
     void main() {
+        // Apply size + location first (preserves Z depth ordering)
+        vec3 scaled = vertexPosition * shapeSize + shapeLocation;
         fragColor = vertexColor;
-        gl_Position = modelViewProjection * vec4(vertexPosition, 1.0);
+        gl_Position = modelViewProjection * vec4(scaled, 1.0);
     }`;
+
     const fsSource = `#version 300 es
     precision mediump float;
     in vec3 fragColor;
@@ -338,6 +341,7 @@ function helloPyramid() {
         }
         return s;
     }
+
     const vs = createShader(gl.VERTEX_SHADER, vsSource);
     const fs = createShader(gl.FRAGMENT_SHADER, fsSource);
     const program = gl.createProgram();
@@ -352,16 +356,34 @@ function helloPyramid() {
     const posLoc = gl.getAttribLocation(program, 'vertexPosition');
     const colLoc = gl.getAttribLocation(program, 'vertexColor');
     const mvpLoc = gl.getUniformLocation(program, 'modelViewProjection');
+    const shapeLocationLoc = gl.getUniformLocation(program, 'shapeLocation');
+    const shapeSizeLoc = gl.getUniformLocation(program, 'shapeSize');
+
+    // high-contrast salmon clear color
+    gl.clearColor(0.8549, 0.3765, 0.3216, 1.0); // #da6052
 
     gl.enable(gl.DEPTH_TEST);
     gl.enable(gl.CULL_FACE);
     gl.cullFace(gl.BACK);
-    gl.clearColor(0.08, 0.08, 0.08, 1.0);
     gl.useProgram(program);
-    gl.enableVertexAttribArray(posLoc);
-    gl.enableVertexAttribArray(colLoc);
 
-    // -------------------- Mouse / touch controls --------------------
+    // VAO setup (done once)
+    gl.bindVertexArray(vao);
+
+    // Position attribute (Float32)
+    gl.bindBuffer(gl.ARRAY_BUFFER, posBuffer);
+    gl.enableVertexAttribArray(posLoc);
+    gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, 0, 0);
+
+    // Color attribute (Uint8, normalized = true) 
+    gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+    gl.enableVertexAttribArray(colLoc);
+    gl.vertexAttribPointer(colLoc, 3, gl.UNSIGNED_BYTE, true, 0, 0);
+
+    // Clean slate
+    gl.bindVertexArray(null);
+
+    // -------------------- Mouse / touch controls (unchanged) --------------------
     canvas.addEventListener('mousedown', (e) => {
         isDragging = true;
         lastMouseX = e.clientX;
@@ -375,7 +397,6 @@ function helloPyramid() {
             const dt = performance.now() - mouseDownTime;
             const dx = e.clientX - mouseDownX;
             const dy = e.clientY - mouseDownY;
-            // short click with little movement → swing
             if (dt < 250 && Math.hypot(dx, dy) < 8) {
                 if (!isSwinging) {
                     isSwinging = true;
@@ -437,11 +458,15 @@ function helloPyramid() {
 
     // -------------------- Render loop --------------------
     let lastTime = performance.now();
-
     function drawFrame(now) {
-        const dt = (now - lastTime) * 0.001;
+        const dt = (now - lastTime) * 0.001;   // delta time in seconds
         lastTime = now;
         const time = now * 0.001;
+
+        // physics update
+        shapePosition[0] += shapeVelocity[0] * dt;
+        shapePosition[1] += shapeVelocity[1] * dt;
+        shapePosition[2] += shapeVelocity[2] * dt;
 
         // advance swing
         if (isSwinging) {
@@ -456,11 +481,16 @@ function helloPyramid() {
 
         // rebuild animated mesh
         buildGeometry(time, swingProgress);
-        const cpuBuffer = new Float32Array(verts);
-        const vertexCount = cpuBuffer.length / FLOATS_PER_VERTEX;
 
-        gl.bindBuffer(gl.ARRAY_BUFFER, geoBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, cpuBuffer, gl.DYNAMIC_DRAW);
+        const posData = new Float32Array(positions);
+        const colData = new Uint8Array(colors);
+        const vertexCount = positions.length / 3;
+
+        // Upload dynamic data
+        gl.bindBuffer(gl.ARRAY_BUFFER, posBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, posData, gl.DYNAMIC_DRAW);
+        gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, colData, gl.DYNAMIC_DRAW);
 
         // resize
         canvas.width = canvas.clientWidth;
@@ -479,18 +509,18 @@ function helloPyramid() {
             ),
             mat4.rotateY(cameraYaw)
         );
-
-        // slight idle model rotation is removed – camera does the orbiting
         const model = mat4.identity();
         const mvp = mat4.multiply(projection, mat4.multiply(view, model));
 
         gl.uniformMatrix4fv(mvpLoc, false, mvp);
+        gl.uniform3fv(shapeLocationLoc, shapePosition);   //  
+        gl.uniform3f(shapeSizeLoc, 1.0, 1.0, 1.0);        // 
 
-        const stride = FLOATS_PER_VERTEX * 4;
-        gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, stride, 0);
-        gl.vertexAttribPointer(colLoc, 3, gl.FLOAT, false, stride, 12);
-
+        // bind VAO, draw, then unbind
+        gl.bindVertexArray(vao);
         gl.drawArrays(gl.TRIANGLES, 0, vertexCount);
+        gl.bindVertexArray(null);
+
         requestAnimationFrame(drawFrame);
     }
     requestAnimationFrame(drawFrame);
